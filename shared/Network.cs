@@ -52,7 +52,7 @@ public partial class Network {
 
 
     /// <summary>Verion of the server. example: "1.0.0.0". Gets its value after successfull handshake</summary>
-    public static readonly string? ServerVersion;
+    public static string ServerVersion { get; private set; } = "1.0.0.0";
 
 	/// <summary>List of the other clients connected to server</summary>
 	#if SERVER
@@ -111,13 +111,14 @@ public partial class Network {
 		public string? MethodName { get; set; }
 		///<summary>Parameters to be send into the method</summary>
 		public dynamic? Parameters { get; set; }
-		public bool UseClass { get; set; } = false;
-		// Array of parameters passed to method that is going to be executed
+		///<summary>Check if Parameters is a class object or object</summary>
+		public bool UseClass { get; set; }
+		///<summary>Random Key that is used to check for response for specific request</summary>
 		public int Key { get; set; } = new Random().Next(100,int.MaxValue);
 		///<summary>ID of the client who sent the message</summary>
 		public int? Sender { get; set; } = ClientID;
 		// Id of the sender. Can be null in case handshake is not completed
-		public bool isHandshake { get; set; } = false;
+		public bool? isHandshake { get; set; }
 		// Used to detect for handshake. Else send error for not connected to server!
 		internal dynamic? OriginalParams { get; set; }
 		/// <summary>Builds a new NetworkMessage that can be sent to wanted target using SendData or RequestData</summary>
@@ -313,24 +314,84 @@ public partial class Network {
 
 
 
-	/// <summary>
-	/// Request data from target by invoking its method using ASYNC
-	/// </summary>
-	/// <param name="message"></param>
-	/// <returns></returns>
-	/// <exception cref="InvalidOperationException"></exception>
-	/// <exception cref="Exception"></exception>
-	public static async void SendDataAsync(NetworkMessage message) {
+	// TODO do async version!!!
+    private static void SendMessage(dynamic message, NetworkStream Stream, bool waitResponse = true)
+    {
+        if (message is NetworkMessage && message.isHandshake != true && message.Sender != ClientID)
+        {
+            NetworkEvents? listener = NetworkEvents.Listener;
+            listener?.ExecuteEvent(new OnMessageSentEvent(message));
+        }
+        if (message is NetworkMessage && !(message.Parameters is null) && message.Sender == ClientID)
+        {
+            bool useClass = false;
+            if (message.OriginalParams == null) message.OriginalParams = message.Parameters; // TODO find better way
+            message.Parameters = SerializeParameters(message.OriginalParams, ref useClass);
+            message.UseClass = useClass;
+        }
+        // [0 = ack, 1-4 = JsonMsgLenght, 5-6 = ACK KEY, 7... actual JsonMsg]
+        List<byte> bytes = new List<byte>();
+		bytes.AddRange(JsonSerializer.SerializeToUtf8Bytes(message));
+        bytes.InsertRange(0,BitConverter.GetBytes(bytes.Count)); // 4 bytes
+        
+        // Always add extra random key (2 bytes)
+        bytes.Insert(0,Convert.ToByte(waitResponse)); // 0 = NACK : 1 = ACK
+        Random rand = new Random();
+        ushort randomKey = (ushort)rand.Next(65530);
+        bytes.InsertRange(5,BitConverter.GetBytes(randomKey));
+
+        // Send data
+        Stream.WriteAsync(bytes.ToArray(), 0, bytes.Count);
+
+        if (waitResponse) {
+            new Thread(() => {
+                int timer = 0;
+                while (timer < 100) {
+                    if (Results.ContainsKey((int)randomKey)) return; // ACK received!
+                    Thread.Sleep(1); // TODO ASYNC
+                    ++timer;
+                }
+                Log($"ERROR: ACK not received for: {message} (MSG timed out!)");
+            }).Start();
+        }
+    }
+
+
+    /// <summary>
+    /// Request data from target by invoking its method using ASYNC
+    /// </summary>
+    /// <param name="message"></param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    /// <exception cref="Exception"></exception>
+    public static async void SendDataAsync(NetworkMessage message) {
 		await Task.Run(() => { SendData(message); });
 	}
 
 	private static byte[] ReadMessageBytes(NetworkStream Stream) {
-		byte[] lenghtBytes = new byte[2];
-		Stream.Read(lenghtBytes,0,2);
-		ushort msgLenght = BitConverter.ToUInt16(lenghtBytes,0);
-		byte[] bytes = new byte[msgLenght];
-		Stream.Read(bytes,0,msgLenght);
-		return bytes;
+        List<byte> bytes = new List<byte>();
+
+        byte[] byteInfo = new byte[7];
+		Stream.Read(byteInfo,0,7);
+
+        byte ackByte = byteInfo[0];
+        int msgLenght = BitConverter.ToInt32(byteInfo,1);
+		ushort ackKey = BitConverter.ToUInt16(byteInfo,5);
+
+        if (ackByte == 0x06) {
+            Results.Add((int)ackKey,true);
+            return new byte[] { 0x06 }; // IS ACTUAL ACK RECEIVED
+        }
+
+		byte[] msgBytes = new byte[msgLenght];
+		Stream.Read(msgBytes,0,msgLenght);
+        Stream.Flush();
+
+        if (ackByte == 0x01) { // Send ACK of msg Received
+            byte[] responseBytes = {0x06,0x00,0x00,0x00,0x00,(byte)(ackKey),(byte)(ackKey >> 8)};
+            Stream.WriteAsync(responseBytes);
+        }
+		return msgBytes;
 	}
 	private static dynamic RequestDataResult(NetworkMessage message) {
 		dynamic returnMessage;
@@ -347,6 +408,54 @@ public partial class Network {
 		}
 		return returnMessage;
 	}
+
+	private static MethodInfo? GetMessageMethodInfo(string? methodName) {
+        int methodId;
+        MethodInfo? method;
+        bool isInt = int.TryParse(methodName, out methodId);
+        if (isInt && (methodId < 0)) {
+            string privateMethodName = PrivateMethods[Math.Abs(methodId) - 1];
+            method = typeof(Network).GetMethod(privateMethodName);
+        } else {
+
+		#if SERVER
+			method = ServerMethods.FirstOrDefault(x => x.Name.ToLower() == methodName?.ToLower());
+		#else
+            method = ClientMethods.FirstOrDefault(x => x.Name.ToLower() == methodName?.ToLower());
+		#endif
+		
+		    if (method == default) throw new Exception($"Method {methodName} was not found from Registered Methods!");
+        }
+        return method;
+    }
+
+	private static object[]? GetMessageParameters(MethodInfo? method, dynamic message, dynamic? client = null) {
+        ParameterInfo[]? parameterInfo = method?.GetParameters(); // Get parameters from the method to be invoked
+        if (parameterInfo?.Count() > 0) {
+            List<object> paramList = new List<object>();
+            ParameterInfo first = parameterInfo[0];
+
+		#if SERVER
+			if (first.ParameterType == typeof(NetworkClient)) paramList.Add(client);
+			if (parameterInfo.Count() > 1 && (parameterInfo[1].ParameterType == typeof(NetworkMessage))) paramList.Add(message);
+		#else
+            if (first.ParameterType == typeof(NetworkMessage)) paramList.Add(message);
+		#endif
+
+            if (message.Parameters != null) {
+                if (message.Parameters is Array){
+                    foreach (var item in message.Parameters){
+                        if (method?.GetParameters().Count() == paramList.Count()) break; // Not all parameters can fill in
+                        paramList.Add(item);
+                    }
+                } else {
+                    paramList.Add(message.Parameters);
+                }
+            }
+            return paramList.ToArray();
+        }
+        return null;
+    }
 
 	private static object[] SerializeParameters(dynamic parameters,ref bool useClass) {
 		try {
@@ -368,9 +477,9 @@ public partial class Network {
 		}
 		return newParams.ToArray();
 	}
-	private static dynamic? DeserializeParameters(dynamic parameterData,bool isClass = false) {
+	private static dynamic? DeserializeParameters(dynamic parameterData, bool useClass = false) {
 		if(parameterData is null) return null;
-		if (isClass) return parameterData;
+		if (useClass) return parameterData;
 		List<object> parameters = JsonSerializer.Deserialize<List<object>>(parameterData);
 		bool odd = parameters.Count()%2 != 0;
 		if (odd && parameters.Count() > 2) {
@@ -413,7 +522,7 @@ public partial class Network {
 		Log($"MessageType:{message.MessageType}");
 		Log($"TargetId:{message.TargetId}");
 		Log($"MethodName:{message.MethodName}");
-		Log($"IsClass:{message.UseClass}");
+		Log($"ParamIsClass:{message.UseClass}");
 		Log($"Handshake:{message.isHandshake}");
 		Log();
 		Log(JsonSerializer.Serialize<object>(message.Parameters));

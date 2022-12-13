@@ -41,7 +41,7 @@ public class Program {
         Console.WriteLine($"*EVENT* HANDSHAKE STARTED: version:{eventData.ClientVersion}, username:{eventData.UserName}");
     }
     public static void OnHandShakeEnd(object sender, OnHandShakeEndEvent eventData){
-        Console.WriteLine($"*EVENT* HANDSHAKE ENDED: Success:{eventData.ServerVersion}, Code:{eventData.ErrorCode}");
+        Console.WriteLine($"*EVENT* HANDSHAKE ENDED: version:{eventData.ClientVersion}, username:{eventData.UserName}");
     }
 
 
@@ -58,16 +58,14 @@ public class Program {
         int methodsAdded = Network.RegisterMethod( typeof(ServerMethods) );
         Console.WriteLine($"{methodsAdded} Methods registered!");
 
-        NetworkEvents.eventsListener.ClientConnected += OnClientConnected;
-        NetworkEvents.eventsListener.ClientDisconnect += OnClientDisconnect;
-        NetworkEvents.eventsListener.ServerShutdown += OnServerShutdown;
-        NetworkEvents.eventsListener.ServerStart += OnServerStart;
-        NetworkEvents.eventsListener.MessageSent += OnMessageSent;
-        NetworkEvents.eventsListener.MessageReceived += OnMessageReceived;
-        NetworkEvents.eventsListener.HandshakeStart += OnHandShakeStart;
-        NetworkEvents.eventsListener.HandshakeEnd += OnHandShakeEnd;
-
-        Console.WriteLine("Type 'help' for commands!");
+        NetworkEvents.Listener.ClientConnected += OnClientConnected;
+        NetworkEvents.Listener.ClientDisconnect += OnClientDisconnect;
+        NetworkEvents.Listener.ServerShutdown += OnServerShutdown;
+        NetworkEvents.Listener.ServerStart += OnServerStart;
+        NetworkEvents.Listener.MessageSent += OnMessageSent;
+        NetworkEvents.Listener.MessageReceived += OnMessageReceived;
+        NetworkEvents.Listener.HandshakeStart += OnHandShakeStart;
+        NetworkEvents.Listener.HandshakeEnd += OnHandShakeEnd;
     
         Network.StartServer();
 
