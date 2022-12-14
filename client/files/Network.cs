@@ -315,28 +315,30 @@ public partial class Network {
         Client.UserName = userName;
 
         //--- Build server methods
-        object[] methods = (object[])returnMessage.Parameters[2];
-        foreach (object[] method in methods) {
-            try {
-                string returnType = (string)method[1];
-                Type? type = Type.GetType(returnType);
-                if (type == null) throw new Exception($"INVALID return value type ({returnType}), found for: {(string)method[0]}");
+        if (!MethodsInitialized) {
+            object[] methods = (object[])returnMessage.Parameters[2];
+            foreach (object[] method in methods) {
+                try {
+                    string returnType = (string)method[1];
+                    Type? type = Type.GetType(returnType);
+                    if (type == null) throw new Exception($"INVALID return value type ({returnType}), found for: {(string)method[0]}");
 
-                List<Type> typeList = new List<Type> { };
-                foreach (string paramType in (object[])method[2])
-                {
-                    Type? typeThis = Type.GetType(paramType);
-                    if (typeThis != null) typeList.Add(typeThis);
-                }
-                ServerMethods.Add(new NetworkMethodInfo(
-                    (string)method[0],
-                    type,
-                    typeList.ToArray<Type>()
-                ));
+                    List<Type> typeList = new List<Type> { };
+                    foreach (string paramType in (object[])method[2])
+                    {
+                        Type? typeThis = Type.GetType(paramType);
+                        if (typeThis != null) typeList.Add(typeThis);
+                    }
+                    ServerMethods.Add(new NetworkMethodInfo(
+                        (string)method[0],
+                        type,
+                        typeList.ToArray<Type>()
+                    ));
+                } catch { }
             }
-            catch { }
+            MethodsInitialized = true;
         }
-        MethodsInitialized = true;
+        
         Log($"*DEBUG* Added ({ServerMethods.Count()}) SERVER methods to list!");
 
         //--- Build client list of other clients

@@ -48,7 +48,7 @@ public partial class Network {
 
 	private static Dictionary<int,dynamic> Results = new Dictionary<int,dynamic>();
 	private static List<string> PrivateMethods = new List<string>() {};
-    private static bool MethodsInitialized = false;
+    private static bool MethodsInitialized = false; //TODO add for each client when all clients can have their own methods
 
 
     /// <summary>Verion of the server. example: "1.0.0.0". Gets its value after successfull handshake</summary>
