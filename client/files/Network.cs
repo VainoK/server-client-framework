@@ -116,7 +116,7 @@ public partial class Network {
 
                 //--- Make sure data is valid, and no socket error
                 if (bytes.Count() == 0) {
-                    if (Client.Available != 0) throw new EndOfStreamException("Server closed connection!");
+                    if (Client.Available != 0) throw new EndOfStreamException("Server closed connection! (Unknown reason)");
                     Client.Stream?.Close();
                     Client.Close();
                     break;
@@ -243,66 +243,7 @@ public partial class Network {
     
 
 
-    /// <summary>
-    /// Invoke a method on receivers end. This uses fire and forget mode. (No data to be returned)
-    /// </summary>
-    /// <param name="message"></param>
-    /// <exception cref="InvalidOperationException"></exception>
-    /// <exception cref="Exception"></exception>
-    public static void SendData(NetworkMessage message) {
-        if (!IsConnected()) throw new Exception("Not connected to server");
-        if (message.TargetId == Client.ID) throw new Exception("Cannot send data to self! (client)");
-        if (message.MessageType == null) message.MessageType = (int?)MessageTypes.SendData;
-
-        //--- If sendData or RequestData
-        if (message.MessageType != 11) {
-            if (message.TargetId != 1) {
-                var found = ClientMethods.FirstOrDefault(x => x.Name?.ToLower() == message.MethodName?.ToLower());
-                if (found == default) throw new Exception($"Method {message.MethodName} not listed in CLIENT'S methods list");
-            } else {
-                var found = ServerMethods?.FirstOrDefault(x => x.Name?.ToLower() == message.MethodName?.ToLower());
-                if (found == default) throw new Exception($"Method {message.MethodName} not listed in SERVER'S methods list");
-            }
-            if (message.TargetId == 0) Log($"DATA SENT TO: ({ClientList.Count()}) CLIENT(s)!");
-        }
-
-        SendMessage(message, Client.GetStream());
-        DebugMessage(message, 1);
-    }
-
-
-
-
-
-
-
-    /// <summary>
-    /// Request data from target by invoking its method.
-    /// </summary>
-    /// <param name="message"></param>
-    /// <returns></returns>
-    /// <exception cref="InvalidOperationException"></exception>
-    /// <exception cref="Exception"></exception>
-    public static dynamic RequestData(NetworkMessage message) {
-        if (!IsConnected()) throw new Exception("Not connected to server");
-        if (message.TargetId == Client.ID) throw new Exception("Cannot request data from self!");
-        if (message.TargetId == 0) throw new Exception("Invalid target! Cannot request data from all clients at the same time!");
-        if (message.TargetId != 1) {
-            if ((ClientList.SingleOrDefault(x => x.ID == message.TargetId)) == default) throw new Exception("Invalid target ID. ID not listed in clients list!");
-
-            var found = ClientMethods.FirstOrDefault(x => x.Name.ToString().ToLower() == message.MethodName?.ToLower());
-            if (found == default) throw new Exception($"Method {message.MethodName} not listed in CLIENT'S methods list");
-            if (found.ReturnType == typeof(void)) throw new ArgumentException($"Method {message.MethodName} doesn't have a return value! (Uses void) Set message.Parameters to null before requesting data!");
-        } else {
-            var found = ServerMethods?.FirstOrDefault(x => x.Name?.ToLower() == message.MethodName?.ToLower());
-            if (found == default) throw new Exception($"Method {message.MethodName} not listed in SERVER'S methods list");
-            if (found.ReturnType == typeof(void)) throw new ArgumentException($"Method {message.MethodName} doesn't have a return value! (Uses void) Set message.Parameters to null before requesting data!");
-        }
-        message.MessageType = (int?)MessageTypes.RequestData;
-        SendMessage(message, Client.GetStream());
-        DebugMessage(message, 1);
-        return RequestDataResult(message);
-    }
+    
 
 
 
@@ -348,12 +289,13 @@ public partial class Network {
         //--- Deserialize returned data
         var utf8Reader = new Utf8JsonReader(bytes);
         NetworkMessage? returnMessage = JsonSerializer.Deserialize<NetworkMessage>(ref utf8Reader)!;
-        object[] returnedParams = DeserializeParameters(returnMessage.Parameters);
+        DeserializeParameters(returnMessage.Parameters);
+        if (returnMessage.Parameters == null) throw new Exception("ERROR HANDSHAKE! UNKNOWN REASON (SERVER)");
         DebugMessage(returnMessage);
 
         //--- Get temporary client ID and store servers version
-        int _clientID = (int)returnedParams[0];
-        ServerVersion = (string)returnedParams[1];
+        int _clientID = (int)returnMessage.Parameters[0];
+        ServerVersion = (string)returnMessage.Parameters[1];
 
         //--- Start handshake
         NetworkEvents? listener = NetworkEvents.Listener;
@@ -373,7 +315,7 @@ public partial class Network {
         Client.UserName = userName;
 
         //--- Build server methods
-        object[] methods = (object[])returnedParams[2];
+        object[] methods = (object[])returnMessage.Parameters[2];
         foreach (object[] method in methods) {
             try {
                 string returnType = (string)method[1];
@@ -397,7 +339,7 @@ public partial class Network {
         Log($"*DEBUG* Added ({ServerMethods.Count()}) SERVER methods to list!");
 
         //--- Build client list of other clients
-        object[] clients = (object[])returnedParams[3];
+        object[] clients = (object[])returnMessage.Parameters[3];
         foreach (object[] clientData in clients) {
             ClientList.Add(new OtherClient((int)clientData[0], (string)clientData[1]));
         }

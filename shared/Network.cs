@@ -151,6 +151,57 @@ public partial class Network {
 
 	
 
+	
+
+
+	/// <summary>
+    /// Request data from target by invoking its method.
+    /// </summary>
+    /// <param name="message"></param>
+    /// <returns></returns>
+    /// <exception cref="InvalidOperationException"></exception>
+    /// <exception cref="Exception"></exception>
+    public static dynamic RequestData(NetworkMessage message) {
+#if SERVER
+		if (!ServerRunning) throw new InvalidOperationException("Server not running!");
+#else
+        if (!IsConnected()) throw new Exception("Not connected to server");
+#endif
+
+	    if (message.TargetId == 0) throw new Exception("Invalid target! Cannot request data from all clients at the same time!");
+        if (message.TargetId == ClientID) throw new Exception("Cannot request data from self!");
+        
+
+		message.MessageType = (int?)MessageTypes.RequestData;
+        NetworkStream stream;
+
+#if SERVER
+        if (message.MessageType != 11) {
+            var found = ClientMethods?.FirstOrDefault(x => x.Name?.ToLower() == message.MethodName?.ToLower());
+            if (found == default) throw new Exception($"Method {message.MethodName} not listed in CLIENT'S methods list");
+            if (found.ReturnType == typeof(void)) throw new Exception($"Method {message.MethodName} doesn't have a return value! (Uses void)");
+        }
+        NetworkClient? client = ClientList.FirstOrDefault(client => client.ID == message.TargetId);
+        if (client == null) throw new Exception("Invalid target ID!");
+		stream = client.Stream;
+#else
+		if (message.TargetId != 1) {
+            if ((ClientList.SingleOrDefault(x => x.ID == message.TargetId)) == default) throw new Exception("Invalid target ID. ID not listed in clients list!");
+            var found = ClientMethods.FirstOrDefault(x => x.Name.ToString().ToLower() == message.MethodName?.ToLower());
+            if (found == default) throw new Exception($"Method {message.MethodName} not listed in CLIENT'S methods list");
+            if (found.ReturnType == typeof(void)) throw new ArgumentException($"Method {message.MethodName} doesn't have a return value! (Uses void) Set message.Parameters to null before requesting data!");
+        } else {
+            var found = ServerMethods?.FirstOrDefault(x => x.Name?.ToLower() == message.MethodName?.ToLower());
+            if (found == default) throw new Exception($"Method {message.MethodName} not listed in SERVER'S methods list");
+            if (found.ReturnType == typeof(void)) throw new ArgumentException($"Method {message.MethodName} doesn't have a return value! (Uses void) Set message.Parameters to null before requesting data!");
+        }
+        stream = Client.GetStream();
+#endif
+
+        SendMessage(message, stream);
+        DebugMessage(message, 1);
+        return RequestDataResult(message);
+    }
 
 
 	/// <summary>
@@ -314,16 +365,72 @@ public partial class Network {
 
 
 
+	/// <summary>
+    /// Invoke a method on receivers end. This uses fire and forget mode. (No data to be returned)
+    /// </summary>
+    /// <param name="message"></param>
+    /// <exception cref="InvalidOperationException"></exception>
+    /// <exception cref="Exception"></exception>
+    public static void SendData(NetworkMessage message) {
+#if SERVER
+		if (!ServerRunning) throw new InvalidOperationException("Server not running!");
+#else
+        if (!IsConnected()) throw new Exception("Not connected to server");
+#endif
+
+		if (message.TargetId == ClientID) throw new Exception("Cannot send data to self! (client)");
+        if (message.MessageType == null) message.MessageType = (int?)MessageTypes.SendData;
+
+#if SERVER
+		//--- Use ResponseData
+        if (message.MessageType != 11) {
+            var found = ClientMethods?.FirstOrDefault(x => x.Name?.ToLower() == message.MethodName?.ToLower());
+            if (found == default) throw new Exception($"Method {message.MethodName} not listed in CLIENT'S methods list");
+        }
+
+        //--- Send to single or multiple users
+        if (message.TargetId > 0) {
+            NetworkClient? client = ClientList.FirstOrDefault(c => c.ID == message.TargetId);
+            if (client == null) throw new Exception("Invalid target!");
+            SendMessage(message, client.Stream);
+            int mode = message.Sender == 1 ? 1 : 3;
+            DebugMessage(message, mode);
+        } else {
+            int i = 0;
+            foreach (NetworkClient client in ClientList) {
+                if (message.Sender == client.ID) continue;
+                SendMessage(message, client.Stream);
+                i++;
+            }
+            if (message.Sender == 1) Log($"DATA SENT TO {i} USERS(s)!");
+            else Log($"DATA FORWARDED TO {i} USERS(s)!");
+        }
+#else
+        //--- If sendData or RequestData
+        if (message.MessageType != 11) {
+            if (message.TargetId != 1) {
+                var found = ClientMethods.FirstOrDefault(x => x.Name?.ToLower() == message.MethodName?.ToLower());
+                if (found == default) throw new Exception($"Method {message.MethodName} not listed in CLIENT'S methods list");
+            } else {
+                var found = ServerMethods?.FirstOrDefault(x => x.Name?.ToLower() == message.MethodName?.ToLower());
+                if (found == default) throw new Exception($"Method {message.MethodName} not listed in SERVER'S methods list");
+            }
+            if (message.TargetId == 0) Log($"DATA SENT TO: ({ClientList.Count()}) CLIENT(s)!");
+        }
+		SendMessage(message, Client.GetStream());
+        DebugMessage(message, 1);
+#endif
+    }
+
+
+
 	// TODO do async version!!!
-    private static void SendMessage(dynamic message, NetworkStream Stream, bool waitResponse = true)
-    {
-        if (message is NetworkMessage && message.isHandshake != true && message.Sender != ClientID)
-        {
+    private static void SendMessage(dynamic message, NetworkStream Stream, bool waitResponse = true) {
+        if (message is NetworkMessage && message.isHandshake != true && message.Sender != ClientID) {
             NetworkEvents? listener = NetworkEvents.Listener;
             listener?.ExecuteEvent(new OnMessageSentEvent(message));
         }
-        if (message is NetworkMessage && !(message.Parameters is null) && message.Sender == ClientID)
-        {
+        if (message is NetworkMessage && !(message.Parameters is null) && message.Sender == ClientID) {
             bool useClass = false;
             if (message.OriginalParams == null) message.OriginalParams = message.Parameters; // TODO find better way
             message.Parameters = SerializeParameters(message.OriginalParams, ref useClass);
@@ -393,6 +500,9 @@ public partial class Network {
         }
 		return msgBytes;
 	}
+
+
+
 	private static dynamic RequestDataResult(NetworkMessage message) {
 		dynamic returnMessage;
 		short timer = 0;
@@ -513,7 +623,8 @@ public partial class Network {
 
 
 	private static void DebugMessage(NetworkMessage message,int mode = 0) {
-		Log("===============DEBUG MESSAGE===============");
+		if (!Logger.Debug && !Logger.Enabled) return;
+        Log("===============DEBUG MESSAGE===============");
 		string type = "UNKNOWN";
 		if (mode == 1) type = "OUTBOUND";
 		else if (mode == 2) type = "INBOUND";
