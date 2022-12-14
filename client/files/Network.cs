@@ -270,7 +270,7 @@ public partial class Network {
         };
 
         SendMessage(handshakeMessage, Client.GetStream(),false);
-        DebugMessage(handshakeMessage);
+        DebugMessage(handshakeMessage,1);
 
         
         //--- Read and wait for response
@@ -289,9 +289,9 @@ public partial class Network {
         //--- Deserialize returned data
         var utf8Reader = new Utf8JsonReader(bytes);
         NetworkMessage? returnMessage = JsonSerializer.Deserialize<NetworkMessage>(ref utf8Reader)!;
-        DeserializeParameters(returnMessage.Parameters);
+        returnMessage.Parameters = DeserializeParameters(returnMessage.Parameters);
         if (returnMessage.Parameters == null) throw new Exception("ERROR HANDSHAKE! UNKNOWN REASON (SERVER)");
-        DebugMessage(returnMessage);
+        DebugMessage(returnMessage,2);
 
         //--- Get temporary client ID and store servers version
         int _clientID = (int)returnMessage.Parameters[0];
@@ -336,6 +336,7 @@ public partial class Network {
             }
             catch { }
         }
+        MethodsInitialized = true;
         Log($"*DEBUG* Added ({ServerMethods.Count()}) SERVER methods to list!");
 
         //--- Build client list of other clients
