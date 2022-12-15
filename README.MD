@@ -5,6 +5,20 @@
 
 This framework is divided to two different namespaces. One for <u>SERVER</u> framework and another for <u>CLIENT</u> framework.
 
+
+<h2>Run Debug/Develop mode</h2>
+
+Download .NET 7.0 SDK from here: 
+[HERE](https://dotnet.microsoft.com/en-us/download/dotnet/7.0)
+<br>
+
+
+1. Clone this project to your work folder. 
+2. Navigate to server folder: <code> server-client-framework\server</code> using CLI and run: <code>dotnet run</code>
+3. Open another CLI instance and navigate to: <code>server-client-framework\client</code> folder and run: <code>dotnet run</code>
+4. Connect to server from client CLI using connect command.
+
+
 <br>
 <h2>Setup using DLL reference</h2>
 To get started create new folder project using:<br>
@@ -51,8 +65,17 @@ Network.RegisterMethod( typeof(ServerMethods) ); // SEE CLASS EXAMPLE BELOW!
 Network.StartServer();
 
 // ("methodName", target, parameter(s))
-// target: 0 = everyone on server (icludes server), 1 = server, 2 = client with id: 2, -4 = everyone else expect client 4 
-NetworkMessage message = new NetworkMesssage("testclient",1,"this is a parameter");
+
+// target: 0 = everyone on server (expect server), 1 = server, 2 = client with id: 2, -4 = everyone else expect client 4
+NetworkMessage message = new NetworkMesssage("testclient",2,"this is a parameter");
+
+// Alternative:
+NetworkMessage message = new NetworkMessage {
+    MethodName = "testclient",
+    TargetId = 2,
+    Parameters = new object[] {true,123,"hello"}
+};
+
 var returnedData = Network.RequestData(message); // "testclient" method returns string! (see client example)
 Console.WriteLine($"{returnedData} ({returnedData.GetType()})");
 

@@ -35,6 +35,8 @@ Add timeout in events blocking methods
 
 Handle if server uses throw in method when requesting data
 
+When using 0 as target invoke on server?
+Add target id Array and negative int
 
 when requesting a message from client to client check that ACK works
 
